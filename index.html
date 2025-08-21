@@ -1,561 +1,429 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Token & Swap DApp</title>
-    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
-    <style>
-        :root {
-            --inter-font: 'Inter', sans-serif;
+import React, { useState, useEffect } from 'react';
+
+// IMPORTANT: No longer using modular imports for Firebase due to CDN usage
+// These imports are here to satisfy the linter and are not used at runtime.
+import {
+  getFirestore,
+  doc,
+  setDoc,
+  getDoc,
+  onSnapshot,
+  collection,
+  query,
+  where,
+  getDocs,
+  serverTimestamp,
+  addDoc,
+} from 'firebase/firestore';
+import {
+  getAuth,
+  signInWithCustomToken,
+  onAuthStateChanged,
+  signInAnonymously,
+} from 'firebase/auth';
+
+// IMPORTANT: Replace with your actual contract ABI
+const TIFFYAI_ABI = [
+  // ABI functions for your TiffyAI contract
+  // Example ABI entries for a staking contract
+  {
+    "constant": false,
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "stake",
+    "outputs": [],
+    "payable": false,
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "constant": false,
+    "inputs": [],
+    "name": "claimRewards",
+    "outputs": [],
+    "payable": false,
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "constant": true,
+    "inputs": [
+      {
+        "name": "staker",
+        "type": "address"
+      }
+    ],
+    "name": "getStakedBalance",
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "payable": false,
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "constant": true,
+    "inputs": [
+      {
+        "name": "staker",
+        "type": "address"
+      }
+    ],
+    "name": "getEarnedRewards",
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "payable": false,
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "constant": true,
+    "inputs": [],
+    "name": "stakingToken",
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "payable": false,
+    "stateMutability": "view",
+    "type": "function"
+  }
+];
+
+// IMPORTANT: Replace with your actual contract address and network RPC URL
+const STAKING_CONTRACT_ADDRESS = '0x...'; // Your TiffyAI contract address
+const RPC_URL = 'https://...'; // e.g., 'https://mainnet.infura.io/v3/...' or 'https://bsc-dataseed.binance.org/'
+
+// Helper function to format ethers big numbers
+const formatEther = (amount) => {
+  if (!amount || !window.ethers) return '0.00';
+  return window.ethers.utils.formatEther(amount);
+};
+
+// Main App Component
+const App = () => {
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [isReady, setIsReady] = useState(false);
+
+  const [walletAddress, setWalletAddress] = useState(null);
+  const [signer, setSigner] = useState(null);
+  const [stakingContract, setStakingContract] = useState(null);
+  const [tokenContract, setTokenContract] = useState(null);
+
+  const [userTokenBalance, setUserTokenBalance] = useState('0.00');
+  const [userStakedBalance, setUserStakedBalance] = useState('0.00');
+  const [userEarnedRewards, setUserEarnedRewards] = useState('0.00');
+
+  const [stakeAmount, setStakeAmount] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+
+  // Combined useEffect to load all scripts and initialize services
+  useEffect(() => {
+    // This function will be called once all necessary scripts have loaded
+    const initializeServices = async () => {
+      try {
+        if (!window.firebase || !window.ethers) {
+          console.error("Firebase or Ethers.js not loaded.");
+          return;
         }
-        body {
-            font-family: var(--inter-font);
+
+        // Firebase initialization (using v8 global API)
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const app = window.firebase.initializeApp(firebaseConfig);
+        const firebaseAuth = app.auth();
+        const firestoreDb = app.firestore();
+        setDb(firestoreDb);
+        setAuth(firebaseAuth);
+
+        // Sign in user
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        if (initialAuthToken) {
+          await firebaseAuth.signInWithCustomToken(initialAuthToken);
+        } else {
+          await firebaseAuth.signInAnonymously();
         }
-        .text-shadow {
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-        }
-    </style>
-</head>
-<body class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center min-h-screen p-4 transition-colors duration-300">
 
-    <div class="w-full max-w-md bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 transition-colors duration-300">
-        <div class="pb-4 border-b border-gray-200 dark:border-gray-700">
-            <h2 class="text-center text-3xl font-bold text-gray-900 dark:text-white">
-                Token DApp
-            </h2>
-        </div>
-
-        <div class="mt-6 space-y-6">
-            <div class="flex flex-col items-center justify-center space-y-2 text-gray-600 dark:text-gray-300">
-                <p class="text-sm">Connected as:</p>
-                <p id="user-address" class="font-mono text-xs md:text-sm truncate w-full text-center px-2">
-                    Not connected
-                </p>
-            </div>
-
-            <div class="space-y-4 text-center">
-                <div>
-                    <p class="text-sm font-medium text-gray-700 dark:text-gray-200">Your Token Balance</p>
-                    <div id="token-balance" class="text-4xl font-extrabold text-blue-600 dark:text-blue-400 mt-1">
-                        N/A
-                    </div>
-                </div>
-                <div>
-                    <p class="text-sm font-medium text-gray-700 dark:text-gray-200">Your BNB Balance</p>
-                    <div id="bnb-balance" class="text-4xl font-extrabold text-green-600 dark:text-green-400 mt-1">
-                        N/A
-                    </div>
-                </div>
-            </div>
-
-            <div class="space-y-2">
-                <label for="buy-amount" class="text-sm font-medium text-gray-700 dark:text-gray-200">Buy Tokens (in BNB)</label>
-                <div class="flex space-x-2">
-                    <input
-                        id="buy-amount"
-                        type="number"
-                        placeholder="0.1"
-                        class="flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button id="buy-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                        Buy
-                    </button>
-                </div>
-            </div>
-
-            <div class="space-y-2">
-                <label for="sell-amount" class="text-sm font-medium text-gray-700 dark:text-gray-200">Sell Tokens</label>
-                <div class="flex space-x-2">
-                    <input
-                        id="sell-amount"
-                        type="number"
-                        placeholder="1000"
-                        class="flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button id="sell-btn" class="bg-red-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                        Sell
-                    </button>
-                </div>
-            </div>
-
-            <div class="relative pt-1">
-                <div class="flex mb-2 items-center justify-between">
-                    <div id="loading-message" class="text-xs font-semibold inline-block text-gray-500 dark:text-gray-400">
-                        Ready.
-                    </div>
-                </div>
-                <div id="progress-bar-container" class="overflow-hidden h-2 text-xs flex rounded-full bg-gray-200 dark:bg-gray-700">
-                    <div id="progress-bar" style="width:100%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-500 transition-all duration-300"></div>
-                </div>
-            </div>
-            
-        </div>
-
-        <div class="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700 flex flex-col items-center space-y-2">
-            <div id="owner-status" class="flex items-center space-x-2 text-green-500 hidden">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check w-4 h-4">
-                    <path d="M20 6 9 17l-5-5"></path>
-                </svg>
-                <span class="text-sm font-medium">You are the contract owner.</span>
-            </div>
-            <button id="refresh-btn" class="w-full bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-gray-300 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-all">
-                <svg id="refresh-icon" class="inline-block h-4 w-4 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 12a9 9 0 0 0-9-9c-2.33 0-4.51.8-6.14 2.15M3 12a9 9 0 0 0 9 9c2.33 0 4.51-.8 6.14-2.15M21 12v5h-5M3 12V7h5"/>
-                </svg>
-                Refresh Balances
-            </button>
-        </div>
-    </div>
-
-    <script>
-        document.addEventListener('DOMContentLoaded', async () => {
-            // Contract Address and ABI (updated from Sourcify verification)
-            const CONTRACT_ADDRESS = "0xE488253DD6B4D31431142F1b7601C96f24Fb7dd5";
-            const abi = [
-                {
-                    "inputs": [
-                        {
-                            "internalType": "address",
-                            "name": "factoryAddress",
-                            "type": "address"
-                        },
-                        {
-                            "internalType": "address",
-                            "name": "routerAddress",
-                            "type": "address"
-                        }
-                    ],
-                    "stateMutability": "nonpayable",
-                    "type": "constructor"
-                },
-                {
-                    "anonymous": false,
-                    "inputs": [
-                        {
-                            "indexed": false,
-                            "internalType": "address",
-                            "name": "from",
-                            "type": "address"
-                        },
-                        {
-                            "indexed": false,
-                            "internalType": "uint256",
-                            "name": "amount",
-                            "type": "uint256"
-                        }
-                    ],
-                    "name": "TokensBought",
-                    "type": "event"
-                },
-                {
-                    "anonymous": false,
-                    "inputs": [
-                        {
-                            "indexed": false,
-                            "internalType": "address",
-                            "name": "to",
-                            "type": "address"
-                        },
-                        {
-                            "indexed": false,
-                            "internalType": "uint256",
-                            "name": "amount",
-                            "type": "uint256"
-                        }
-                    ],
-                    "name": "TokensSold",
-                    "type": "event"
-                },
-                {
-                    "anonymous": false,
-                    "inputs": [
-                        {
-                            "indexed": true,
-                            "internalType": "address",
-                            "name": "previousOwner",
-                            "type": "address"
-                        },
-                        {
-                            "indexed": true,
-                            "internalType": "address",
-                            "name": "newOwner",
-                            "type": "address"
-                        }
-                    ],
-                    "name": "OwnershipTransferred",
-                    "type": "event"
-                },
-                {
-                    "inputs": [],
-                    "name": "buyTokens",
-                    "outputs": [],
-                    "stateMutability": "payable",
-                    "type": "function"
-                },
-                {
-                    "inputs": [
-                        {
-                            "internalType": "address",
-                            "name": "_tokenAddress",
-                            "type": "address"
-                        }
-                    ],
-                    "name": "getTokenBalance",
-                    "outputs": [
-                        {
-                            "internalType": "uint256",
-                            "name": "",
-                            "type": "uint256"
-                        }
-                    ],
-                    "stateMutability": "view",
-                    "type": "function"
-                },
-                {
-                    "inputs": [
-                        {
-                            "internalType": "address",
-                            "name": "_account",
-                            "type": "address"
-                        }
-                    ],
-                    "name": "getTokenBalanceForAddress",
-                    "outputs": [
-                        {
-                            "internalType": "uint256",
-                            "name": "",
-                            "type": "uint256"
-                        }
-                    ],
-                    "stateMutability": "view",
-                    "type": "function"
-                },
-                {
-                    "inputs": [],
-                    "name": "owner",
-                    "outputs": [
-                        {
-                            "internalType": "address",
-                            "name": "",
-                            "type": "address"
-                        }
-                    ],
-                    "stateMutability": "view",
-                    "type": "function"
-                },
-                {
-                    "inputs": [
-                        {
-                            "internalType": "uint256",
-                            "name": "tokenAmount",
-                            "type": "uint256"
-                        }
-                    ],
-                    "name": "sellTokens",
-                    "outputs": [],
-                    "stateMutability": "nonpayable",
-                    "type": "function"
-                },
-                {
-                    "inputs": [
-                        {
-                            "internalType": "address",
-                            "name": "_factoryAddress",
-                            "type": "address"
-                        }
-                    ],
-                    "name": "setFactoryAddress",
-                    "outputs": [],
-                    "stateMutability": "nonpayable",
-                    "type": "function"
-                },
-                {
-                    "inputs": [
-                        {
-                            "internalType": "address",
-                            "name": "_routerAddress",
-                            "type": "address"
-                        }
-                    ],
-                    "name": "setRouterAddress",
-                    "outputs": [],
-                    "stateMutability": "nonpayable",
-                    "type": "function"
-                },
-                {
-                    "inputs": [],
-                    "name": "tokenAddress",
-                    "outputs": [
-                        {
-                            "internalType": "address",
-                            "name": "",
-                            "type": "address"
-                        }
-                    ],
-                    "stateMutability": "view",
-                    "type": "function"
-                },
-                {
-                    "inputs": [
-                        {
-                            "internalType": "address",
-                            "name": "newOwner",
-                            "type": "address"
-                        }
-                    ],
-                    "name": "transferOwnership",
-                    "outputs": [],
-                    "stateMutability": "nonpayable",
-                    "type": "function"
-                },
-                {
-                    "inputs": [
-                        {
-                            "internalType": "address",
-                            "name": "_tokenAddress",
-                            "type": "address"
-                        }
-                    ],
-                    "name": "updateTokenAddress",
-                    "outputs": [],
-                    "stateMutability": "nonpayable",
-                    "type": "function"
-                },
-                {
-                    "inputs": [
-                        {
-                            "internalType": "uint256",
-                            "name": "amount",
-                            "type": "uint256"
-                        }
-                    ],
-                    "name": "withdrawBNB",
-                    "outputs": [],
-                    "stateMutability": "nonpayable",
-                    "type": "function"
-                },
-                {
-                    "inputs": [
-                        {
-                            "internalType": "uint256",
-                            "name": "amount",
-                            "type": "uint256"
-                        },
-                        {
-                            "internalType": "address",
-                            "name": "_tokenAddress",
-                            "type": "address"
-                        }
-                    ],
-                    "name": "withdrawTokens",
-                    "outputs": [],
-                    "stateMutability": "nonpayable",
-                    "type": "function"
-                }
-            ];
-
-            let provider, signer, contract, userAddress;
-            const elements = {
-                userAddress: document.getElementById('user-address'),
-                tokenBalance: document.getElementById('token-balance'),
-                bnbBalance: document.getElementById('bnb-balance'),
-                buyAmount: document.getElementById('buy-amount'),
-                sellAmount: document.getElementById('sell-amount'),
-                buyBtn: document.getElementById('buy-btn'),
-                sellBtn: document.getElementById('sell-btn'),
-                refreshBtn: document.getElementById('refresh-btn'),
-                ownerStatus: document.getElementById('owner-status'),
-                loadingMessage: document.getElementById('loading-message'),
-                progressBar: document.getElementById('progress-bar')
-            };
-
-            // Display a message to the user
-            function displayMessage(message, isError = false) {
-                elements.loadingMessage.textContent = message;
-                elements.progressBar.style.width = '100%';
-                elements.progressBar.style.backgroundColor = isError ? 'red' : 'blue';
-            }
-
-            // Set loading state for UI elements
-            function setLoading(isLoading) {
-                elements.buyBtn.disabled = isLoading;
-                elements.sellBtn.disabled = isLoading;
-                elements.refreshBtn.disabled = isLoading;
-                if (isLoading) {
-                    elements.buyBtn.textContent = 'Loading...';
-                    elements.sellBtn.textContent = 'Loading...';
-                    elements.refreshBtn.innerHTML = `<svg id="refresh-icon" class="inline-block h-4 w-4 mr-2 animate-spin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 12a9 9 0 0 0-9-9c-2.33 0-4.51.8-6.14 2.15M3 12a9 9 0 0 0 9 9c2.33 0 4.51-.8 6.14-2.15M21 12v5h-5M3 12V7h5"/>
-                    </svg>Refreshing...`;
-                    elements.progressBar.style.width = '50%';
-                    elements.progressBar.classList.add('animate-pulse');
-                    displayMessage('Awaiting transaction...');
-                } else {
-                    elements.buyBtn.textContent = 'Buy';
-                    elements.sellBtn.textContent = 'Sell';
-                    elements.refreshBtn.innerHTML = `<svg id="refresh-icon" class="inline-block h-4 w-4 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 12a9 9 0 0 0-9-9c-2.33 0-4.51.8-6.14 2.15M3 12a9 9 0 0 0 9 9c2.33 0 4.51-.8 6.14-2.15M21 12v5h-5M3 12V7h5"/>
-                    </svg>Refresh Balances`;
-                    elements.progressBar.style.width = '100%';
-                    elements.progressBar.classList.remove('animate-pulse');
-                    displayMessage('Ready.');
-                }
-            }
-
-            // Fetch and display balances
-            async function fetchData() {
-                if (!contract || !userAddress) return;
-                try {
-                    setLoading(true);
-                    
-                    // Fetch token address from the contract
-                    const tokenAddress = await contract.tokenAddress();
-
-                    // Create a new contract instance for the token to get decimals
-                    const tokenContract = new ethers.Contract(
-                        tokenAddress,
-                        [
-                            "function balanceOf(address owner) view returns (uint256)",
-                            "function decimals() view returns (uint8)"
-                        ],
-                        provider
-                    );
-
-                    // Fetch balances and format them
-                    const balanceWei = await tokenContract.balanceOf(userAddress);
-                    const decimals = await tokenContract.decimals();
-                    const bnbBalanceWei = await provider.getBalance(userAddress);
-                    
-                    const formattedBalance = ethers.utils.formatUnits(balanceWei, decimals);
-                    const formattedBnbBalance = ethers.utils.formatEther(bnbBalanceWei);
-
-                    elements.tokenBalance.textContent = Number(formattedBalance).toFixed(2);
-                    elements.bnbBalance.textContent = Number(formattedBnbBalance).toFixed(4);
-
-                } catch (error) {
-                    console.error("Error fetching data:", error);
-                    displayMessage("Failed to fetch data. Check console.", true);
-                } finally {
-                    setLoading(false);
-                }
-            }
-
-            // Initialize the DApp
-            async function init() {
-                if (typeof window.ethereum !== 'undefined') {
-                    try {
-                        // Request account access
-                        await window.ethereum.request({ method: 'eth_requestAccounts' });
-
-                        // Setup provider and signer
-                        provider = new ethers.providers.Web3Provider(window.ethereum);
-                        signer = provider.getSigner();
-                        userAddress = await signer.getAddress();
-
-                        // Instantiate the main contract
-                        contract = new ethers.Contract(CONTRACT_ADDRESS, abi, signer);
-
-                        // Display user address
-                        elements.userAddress.textContent = userAddress;
-
-                        // Check if user is the owner
-                        const owner = await contract.owner();
-                        if (owner.toLowerCase() === userAddress.toLowerCase()) {
-                            elements.ownerStatus.classList.remove('hidden');
-                        }
-
-                        // Fetch initial data
-                        await fetchData();
-
-                    } catch (error) {
-                        console.error("Initialization error:", error);
-                        displayMessage("Wallet connection failed.", true);
-                    }
-                } else {
-                    displayMessage("Please install a wallet like MetaMask.", true);
-                    elements.buyBtn.disabled = true;
-                    elements.sellBtn.disabled = true;
-                    elements.refreshBtn.disabled = true;
-                }
-            }
-
-            // Buy tokens handler
-            elements.buyBtn.addEventListener('click', async () => {
-                const amount = elements.buyAmount.value;
-                if (!amount) {
-                    displayMessage("Please enter a BNB amount.", true);
-                    return;
-                }
-                setLoading(true);
-                try {
-                    const tx = await contract.buyTokens({
-                        value: ethers.utils.parseEther(amount)
-                    });
-                    await tx.wait();
-                    displayMessage("Transaction successful!");
-                    elements.buyAmount.value = '';
-                    fetchData();
-                } catch (error) {
-                    console.error("Buy error:", error);
-                    displayMessage("Transaction failed.", true);
-                } finally {
-                    setLoading(false);
-                }
-            });
-
-            // Sell tokens handler
-            elements.sellBtn.addEventListener('click', async () => {
-                const amount = elements.sellAmount.value;
-                if (!amount) {
-                    displayMessage("Please enter a token amount.", true);
-                    return;
-                }
-                setLoading(true);
-                try {
-                    // Assuming 18 decimals for the token based on the code's assumption
-                    const tokenAmountWei = ethers.utils.parseUnits(amount, 18);
-                    
-                    // The user's wallet needs to approve the contract to spend the tokens first
-                    const tokenAddress = await contract.tokenAddress();
-                    const tokenContract = new ethers.Contract(
-                        tokenAddress,
-                        ["function approve(address spender, uint256 amount) returns (bool)"],
-                        signer
-                    );
-
-                    // First, get the current allowance
-                    const allowance = await tokenContract.allowance(userAddress, CONTRACT_ADDRESS);
-
-                    // If allowance is less than the amount being sold, request approval
-                    if (allowance.lt(tokenAmountWei)) {
-                        displayMessage("Approving tokens for sale...");
-                        const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, tokenAmountWei);
-                        await approveTx.wait();
-                        displayMessage("Approval successful! Awaiting sell transaction...");
-                    }
-
-                    const tx = await contract.sellTokens(tokenAmountWei);
-                    await tx.wait();
-                    displayMessage("Transaction successful!");
-                    elements.sellAmount.value = '';
-                    fetchData();
-                } catch (error) {
-                    console.error("Sell error:", error);
-                    displayMessage("Transaction failed. Check console for details.", true);
-                } finally {
-                    setLoading(false);
-                }
-            });
-
-            // Refresh button handler
-            elements.refreshBtn.addEventListener('click', fetchData);
-
-            // Initial setup
-            init();
+        // Set up auth state listener
+        const unsubscribe = firebaseAuth.onAuthStateChanged((user) => {
+          if (user) {
+            setUserId(user.uid);
+          } else {
+            setUserId(null);
+          }
         });
-    </script>
-</body>
-</html>
+
+        setIsReady(true);
+        return () => unsubscribe();
+
+      } catch (error) {
+        console.error("Error initializing services:", error);
+      }
+    };
+
+    // Load scripts sequentially using nested onload handlers
+    const loadScripts = () => {
+      // 1. Load Firebase App
+      const appScript = document.createElement('script');
+      appScript.src = 'https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js';
+      document.head.appendChild(appScript);
+      appScript.onload = () => {
+        // 2. Load Firebase Auth
+        const authScript = document.createElement('script');
+        authScript.src = 'https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js';
+        document.head.appendChild(authScript);
+        authScript.onload = () => {
+          // 3. Load Firebase Firestore
+          const firestoreScript = document.createElement('script');
+          firestoreScript.src = 'https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js';
+          document.head.appendChild(firestoreScript);
+          firestoreScript.onload = () => {
+            // 4. Load Ethers.js
+            const ethersScript = document.createElement('script');
+            ethersScript.src = 'https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js';
+            document.head.appendChild(ethersScript);
+            ethersScript.onload = initializeServices;
+          }
+        };
+      };
+    };
+
+    if (!window.firebase || !window.ethers) {
+      loadScripts();
+    } else {
+      initializeServices();
+    }
+
+  }, []);
+
+  // Connect to MetaMask and get contract instances
+  const connectWallet = async () => {
+    if (!isReady) {
+      setMessage('App is not ready. Please wait a moment.');
+      return;
+    }
+    
+    if (typeof window.ethereum === 'undefined' || typeof window.ethers === 'undefined') {
+      setMessage('Please install MetaMask and ensure ethers.js is loaded.');
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      setMessage('Connecting to wallet...');
+      await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const provider = new window.ethers.providers.Web3Provider(window.ethereum, 'any');
+      setSigner(provider.getSigner());
+
+      const accounts = await provider.listAccounts();
+      setWalletAddress(accounts[0]);
+
+      const stakingContractInstance = new window.ethers.Contract(STAKING_CONTRACT_ADDRESS, TIFFYAI_ABI, provider.getSigner());
+      setStakingContract(stakingContractInstance);
+
+      const tokenAddress = await stakingContractInstance.stakingToken();
+      const tokenContractInstance = new window.ethers.Contract(tokenAddress, TIFFYAI_ABI, provider.getSigner());
+      setTokenContract(tokenContractInstance);
+
+      setMessage('Wallet connected!');
+    } catch (error) {
+      console.error("Error connecting wallet:", error);
+      setMessage(`Failed to connect wallet: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch user data from the blockchain
+  const fetchUserData = async () => {
+    if (!stakingContract || !tokenContract || !walletAddress || !window.ethers) return;
+    try {
+      setLoading(true);
+      setMessage('Fetching data...');
+      
+      const balance = await tokenContract.balanceOf(walletAddress);
+      setUserTokenBalance(formatEther(balance));
+
+      const stakedBalance = await stakingContract.getStakedBalance(walletAddress);
+      setUserStakedBalance(formatEther(stakedBalance));
+
+      const earnedRewards = await stakingContract.getEarnedRewards(walletAddress);
+      setUserEarnedRewards(formatEther(earnedRewards));
+
+      setMessage('Data updated!');
+    } catch (error) {
+      console.error("Error fetching user data:", error);
+      setMessage(`Failed to fetch data: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isReady && walletAddress) {
+      fetchUserData();
+    }
+  }, [isReady, walletAddress, stakingContract, tokenContract]);
+
+  // Handle the stake action
+  const handleStake = async () => {
+    if (!isReady) {
+      setMessage('App is not ready. Please wait a moment.');
+      return;
+    }
+    if (!signer || !stakeAmount || !stakingContract || !tokenContract || !window.ethers) {
+      setMessage('Please connect wallet and enter an amount.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setMessage('Staking...');
+      const amountInWei = window.ethers.utils.parseEther(stakeAmount);
+      
+      // First, check for token approval
+      const allowance = await tokenContract.allowance(walletAddress, STAKING_CONTRACT_ADDRESS);
+      if (allowance.lt(amountInWei)) {
+        setMessage('Approving tokens...');
+        const approvalTx = await tokenContract.approve(STAKING_CONTRACT_ADDRESS, window.ethers.constants.MaxUint256);
+        await approvalTx.wait();
+        setMessage('Tokens approved. Proceeding with stake...');
+      }
+
+      const stakeTx = await stakingContract.stake(amountInWei);
+      await stakeTx.wait();
+      setMessage('Successfully staked!');
+      setStakeAmount('');
+      fetchUserData(); // Refresh data after transaction
+    } catch (error) {
+      console.error("Staking failed:", error);
+      setMessage(`Staking failed: ${error.reason || error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle the claim rewards action
+  const handleClaim = async () => {
+    if (!isReady) {
+      setMessage('App is not ready. Please wait a moment.');
+      return;
+    }
+    if (!signer || !stakingContract || !window.ethers) {
+      setMessage('Please connect wallet.');
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      setMessage('Claiming rewards...');
+      const claimTx = await stakingContract.claimRewards();
+      await claimTx.wait();
+      setMessage('Rewards claimed successfully!');
+      fetchUserData(); // Refresh data after transaction
+    } catch (error) {
+      console.error("Claiming failed:", error);
+      setMessage(`Claiming failed: ${error.reason || error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-4 font-inter">
+      <div className="w-full max-w-xl bg-gray-800 rounded-2xl shadow-lg p-8">
+        <h1 className="text-3xl font-bold text-center mb-6 text-indigo-400">TiffyAI Staking Platform</h1>
+        
+        {!isReady ? (
+          <div className="text-center text-gray-400">Loading required libraries... Please wait.</div>
+        ) : !walletAddress ? (
+          <div className="text-center">
+            <p className="text-gray-400 mb-4">Connect your wallet to start staking your TiffyAI tokens.</p>
+            <button
+              onClick={connectWallet}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl transition-transform transform hover:scale-105 shadow-md"
+            >
+              Connect Wallet
+            </button>
+          </div>
+        ) : (
+          <div>
+            <div className="text-center text-gray-400 mb-6">
+              <p>Connected: <span className="text-indigo-400 font-mono text-sm">{walletAddress.substring(0, 6)}...{walletAddress.substring(38)}</span></p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mb-6">
+              <div className="bg-gray-700 p-4 rounded-xl shadow-inner">
+                <p className="text-sm text-gray-400">Your Balance</p>
+                <p className="text-xl font-bold text-teal-400">{userTokenBalance}</p>
+              </div>
+              <div className="bg-gray-700 p-4 rounded-xl shadow-inner">
+                <p className="text-sm text-gray-400">Staked</p>
+                <p className="text-xl font-bold text-orange-400">{userStakedBalance}</p>
+              </div>
+              <div className="bg-gray-700 p-4 rounded-xl shadow-inner">
+                <p className="text-sm text-gray-400">Earned Rewards</p>
+                <p className="text-xl font-bold text-amber-400">{userEarnedRewards}</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-700 p-6 rounded-2xl mb-6 shadow-inner">
+              <h2 className="text-2xl font-semibold mb-4 text-center">Stake Your Tokens</h2>
+              <div className="flex items-center space-x-2 mb-4">
+                <input
+                  type="number"
+                  placeholder="Amount to stake"
+                  value={stakeAmount}
+                  onChange={(e) => setStakeAmount(e.target.value)}
+                  className="w-full p-3 rounded-xl bg-gray-800 text-white border border-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                />
+                <button
+                  onClick={handleStake}
+                  disabled={loading || !stakeAmount || stakeAmount <= 0}
+                  className={`bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-xl transition-all ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {loading ? 'Processing...' : 'Stake'}
+                </button>
+              </div>
+              <button
+                onClick={handleClaim}
+                disabled={loading || userEarnedRewards === '0.00'}
+                className={`w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl transition-all ${loading || userEarnedRewards === '0.00' ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                Claim Rewards
+              </button>
+            </div>
+          </div>
+        )}
+        
+        {message && (
+          <div className="bg-gray-700 text-center p-3 mt-4 rounded-xl text-sm font-semibold text-white">
+            {message}
+          </div>
+        )}
+
+      </div>
+      <div className="text-xs text-gray-500 mt-4">
+        <p className="text-center">App ID: {typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'}</p>
+        <p className="text-center">User ID: {userId ? userId : 'Loading...'}</p>
+      </div>
+    </div>
+  );
+};
+
+export default App;
