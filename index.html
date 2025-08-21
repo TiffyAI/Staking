@@ -4,11 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Token & Swap DApp</title>
-    <!-- Inter font -->
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Ethers.js -->
     <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
     <style>
         :root {
@@ -25,16 +22,13 @@
 <body class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center min-h-screen p-4 transition-colors duration-300">
 
     <div class="w-full max-w-md bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 transition-colors duration-300">
-        <!-- Card Header -->
         <div class="pb-4 border-b border-gray-200 dark:border-gray-700">
             <h2 class="text-center text-3xl font-bold text-gray-900 dark:text-white">
                 Token DApp
             </h2>
         </div>
 
-        <!-- Card Content -->
         <div class="mt-6 space-y-6">
-            <!-- Wallet Status -->
             <div class="flex flex-col items-center justify-center space-y-2 text-gray-600 dark:text-gray-300">
                 <p class="text-sm">Connected as:</p>
                 <p id="user-address" class="font-mono text-xs md:text-sm truncate w-full text-center px-2">
@@ -42,7 +36,6 @@
                 </p>
             </div>
 
-            <!-- Balances -->
             <div class="space-y-4 text-center">
                 <div>
                     <p class="text-sm font-medium text-gray-700 dark:text-gray-200">Your Token Balance</p>
@@ -58,7 +51,6 @@
                 </div>
             </div>
 
-            <!-- Buy Section -->
             <div class="space-y-2">
                 <label for="buy-amount" class="text-sm font-medium text-gray-700 dark:text-gray-200">Buy Tokens (in BNB)</label>
                 <div class="flex space-x-2">
@@ -74,7 +66,6 @@
                 </div>
             </div>
 
-            <!-- Sell Section -->
             <div class="space-y-2">
                 <label for="sell-amount" class="text-sm font-medium text-gray-700 dark:text-gray-200">Sell Tokens</label>
                 <div class="flex space-x-2">
@@ -90,7 +81,6 @@
                 </div>
             </div>
 
-            <!-- Transaction Status -->
             <div class="relative pt-1">
                 <div class="flex mb-2 items-center justify-between">
                     <div id="loading-message" class="text-xs font-semibold inline-block text-gray-500 dark:text-gray-400">
@@ -104,7 +94,6 @@
             
         </div>
 
-        <!-- Card Footer -->
         <div class="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700 flex flex-col items-center space-y-2">
             <div id="owner-status" class="flex items-center space-x-2 text-green-500 hidden">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check w-4 h-4">
@@ -124,7 +113,7 @@
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
             // Contract Address and ABI (updated from Sourcify verification)
-            const CONTRACT_ADDRESS = "0x897184A496d1976a44598d9F03B8e72352F6B84e";
+            const CONTRACT_ADDRESS = "0xE488253DD6B4D31431142F1b7601C96f24Fb7dd5";
             const abi = [
                 {
                     "inputs": [
